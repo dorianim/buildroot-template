@@ -1,2 +1,1 @@
-# buildroot-template
-A template repository for buildroot projetcts
+# linuxmuster-linbo7-buildroot
