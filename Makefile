@@ -1,76 +1,129 @@
 TOPDIR := $(shell pwd)
 
-PROJECT_DEFCONFIG = $(shell grep BR2_DEFCONFIG= buildroot/.config | sed -e 's/.*"\(.*\)"/\1/')
+.DEFAULT_GOAL := help
 
-MAKE_BR = make -C buildroot BR2_EXTERNAL=$(TOPDIR) BR2_DL_DIR=$(TOPDIR)/dl
+DL_DIR := $(TOPDIR)/dl
+PARALLEL_JOBS := 8
+
+# config
+
+build-config:
+	cp build-config.example build-config
+
+-include build-config
+
+MAKE_BR = make -C buildroot BR2_EXTERNAL=$(TOPDIR) BR2_DL_DIR=$(DL_DIR) -j $(PARALLEL_JOBS)
 
 # global
-#.buildStep-buildrootDownloaded:
-#	@echo "Downloading Buildroot..."
-#	git submodule update --recursive || exit 1
-#	@touch .buildStep-buildrootDownloaded
+.buildStep-buildrootDownloaded:
+	@echo "Downloading Buildroot..."
+	git submodule update --init || exit 1
+	@touch .buildStep-buildrootDownloaded
 
 # Apply our patches that either haven't been submitted or merged upstream yet
-#.buildStep-buildrootPatched: .buildStep-buildrootDownloaded
-#	buildroot/support/scripts/apply-patches.sh buildroot patches || exit 1
-#	touch .buildStep-buildrootPatched
+.buildStep-buildrootPatched: .buildStep-buildrootDownloaded
+	buildroot/support/scripts/apply-patches.sh buildroot patches/buildroot || exit 1
+	touch .buildStep-buildrootPatched
 
-#reset-buildroot: .buildStep-buildrootDownloaded
-#	# Reset buildroot to a pristine condition so that the
-#	# patches can be applied again.
-#	cd buildroot && git clean -fdx && git reset --hard
-#	rm -f .buildStep-buildrootPatched
+reset-buildroot: .buildStep-buildrootDownloaded
+	# Reset buildroot to a pristine condition so that the
+	# patches can be applied again.
+	cd buildroot && git clean -fdx && git reset --hard
+	rm .buildStep-buildrootPatched
 
-#update-patches: reset-buildroot .buildStep-buildrootPatched
+update-patches: reset-buildroot .buildStep-buildrootPatched
+
+help:
+	@echo '=== Project Build Help ==='
+	@echo
+	@echo 'Global actions:'
+	@echo "  reset-buildroot        Reset buildroot."
+	@echo 
+	@echo "Target-specific actions:"
+	@echo "  <target>_defconfig     Initialize a target."
+	@echo "  <target>_help          Get help for a target."
+	@echo
+	@echo "Available targets:"
+	@$(foreach b, $(sort $(notdir $(wildcard configs/*_defconfig))), \
+	  printf "  * %s\\n" $(b:_defconfig=);)
 # end - global
 
 # board specific
-%_defconfig: configs/%_defconfig
+%_help: %_isInited
+	@echo
+	@echo
+	@echo '=== Target "$(TARGET)" Build Help ==='
+	@echo
+	@echo "You may use the following commands:"
+	@echo "  make $(TARGET)_source          Download all sources so an offline build is possible"
+	@echo "  make $(TARGET)_all             Build everything"
+	@echo "  make $(TARGET)_clean           Clean everything"
+	@echo "  make $(TARGET)_menuconfig      Open the menuconfig"
+	@echo "  make $(TARGET)_save            Save to current configuration to the respective defconfig"
+
+%_defconfig: %_isValidTarget
 	$(call calculate-target-vars,$@)
 	$(MAKE_TARGET) $(TARGET)_defconfig
 
 	@echo
 	@echo
-	@echo "The target $(TARGET) is now initialized!"
-	@echo "You may now use the following commands:"
-	@echo "  make $(TARGET)_all			Build everything"
-	@echo "  make $(TARGET)_clean		Clean everything"
-	@echo "  make $(TARGET)_menuconfig	Open the menuconfig"
-	@echo "  make $(TARGET)_save		Save to current configuration to the respective defconfig"
+	@echo "=== The target $(TARGET) is now initialized! ==="
+	@echo 'Please run "make $(TARGET)_help" for a list of available commands.'
 
 %_all: %_isInited
-	$(MAKE_TARGET) -j8
+	$(MAKE_TARGET) -j16
 	@echo
 	@echo "Project has been built successfully."
 	@echo "Images are in buildroot/output/images."
 
+%_source: %_isInited
+	$(MAKE_TARGET) source
+	@echo
+	@echo "All sources downloaded"
+
 %_menuconfig: %_isInited
 	$(MAKE_TARGET) menuconfig
 	@echo
+	@echo "----------------------------------------"
 	@echo "!!! Important !!!"
-	@echo "$(TARGET_DEFCONFIG) has NOT been updated."
-	@echo "Changes will be lost if you run 'make distclean'."
+	@echo $(TARGET_DEFCONFIG) has NOT been updated.
+	@echo "Changes will not be reflected in your git repository."
 	@echo "Please run"
 	@echo
 	@echo "make $(TARGET)_save"
 	@echo
 	@echo "to update the defconfig."
+	@echo "----------------------------------------"
+	@echo
 
 %_linux-menuconfig: %_isInited
 	$(MAKE_TARGET) linux-menuconfig
 	$(MAKE_TARGET) linux-savedefconfig
 	@echo
-	@echo Going to update your boards/.../linux-x.y.config. If you do not have one,
-	@echo you will get an error shortly. You will then have to make one and update,
+	@echo "----------------------------------------"
+	@echo Going to update your boards/$(TARGET)/linux.config. If you do not have one,
+	@echo you will get an error shortly. You will then have to make one and update
 	@echo your buildroot configuration to use it.
+	@echo To do so, place your linux config into boards/$(TARGET)/linux.config
+	@echo and add the line 
+	@echo BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE=\"$$\(BR2_EXTERNAL\)/board/$(TARGET)/linux.config\"
+	@echo to your defconfig. Dont forget to run make $(TARGET)_defconfig afterwards.
+	@echo "----------------------------------------"
+	@echo
 	$(MAKE_TARGET) linux-update-defconfig
 
 %_busybox-menuconfig: %_isInited
 	$(MAKE_TARGET) busybox-menuconfig
 	@echo
-	@echo Going to update your boards/.../busybox-x.y.config. If you do not have one,
+	@echo "----------------------------------------"
+	@echo Going to update your boards/$(TARGET)/busybox.config. If you do not have one,
 	@echo you will get an error shortly. You will then have to make one and update
 	@echo your buildroot configuration to use it.
+	@echo To do so, place your busybox config into boards/$(TARGET)/busybox.config and add the line 
+	@echo BR2_PACKAGE_BUSYBOX_CONFIG=\"$$\(BR2_EXTERNAL\)/board/$(TARGET)/busybox.config\"
+	@echo to your defconfig. Dont forget to run make $(TARGET)_defconfig afterwards.
+	@echo "----------------------------------------"
+	@echo
 	$(MAKE_TARGET) busybox-update-config
 
 %_clean: %_isInited
@@ -86,7 +139,7 @@ MAKE_BR = make -C buildroot BR2_EXTERNAL=$(TOPDIR) BR2_DL_DIR=$(TOPDIR)/dl
 # Helper stuff
 define calculate-target-vars
 	$(eval TARGET := $(word 1,$(subst _, ,$(1))))
-	$(eval TARGET_DEFCONGIG := $(TOPDIR)/configs/$(TARGET)_defconfig)
+	$(eval TARGET_DEFCONFIG := $(TOPDIR)/configs/$(TARGET)_defconfig)
 	$(eval TARGET_OUTPUTS := $(TOPDIR)/outputs/$(TARGET))
 	$(eval TARGET_IMAGES := $(TARGET_OUTPUTS)/images)
 	$(eval MAKE_TARGET := $(MAKE_BR) O=$(TARGET_OUTPUTS))
@@ -97,13 +150,29 @@ endef
 	$(call calculate-target-vars,$@)
 	@echo "----------------------------------------"
 	@echo "TARGET:			$(TARGET)"
-	@echo "TARGET_DEFCONGIG: 	$(TARGET_DEFCONGIG)"
+	@echo "TARGET_DEFCONFIG: 	$(TARGET_DEFCONFIG)"
 	@echo "TARGET_OUTPUTS:		$(TARGET_OUTPUTS)"
 	@echo "TARGET_IMAGES:		$(TARGET_IMAGES)"
 	@echo "MAKE_TARGET:		$(MAKE_TARGET)"
 	@echo "----------------------------------------"
 
-outputs/%/.config:
+%_isValidTarget: .buildStep-buildrootDownloaded
+	$(call calculate-target-vars,$@)
+	
+	@if [ "$(wildcard $(TARGET_DEFCONFIG))" != "" ]; then	\
+		echo "Target is valid!";							\
+	else													\
+		echo "ERROR: The target is not valid!";\
+		echo "Available targets:";\
+		for i in `ls configs/*_defconfig | xargs -n 1 basename`;     \
+    	do                   \
+        	echo "* $$i" | cut -d_ -f1; \
+    	done;                \
+		echo;\
+		false;\
+	fi
+
+outputs/%/.config: %_isValidTarget
 	$(eval TARGET := $(subst outputs/,,$@))
 	$(eval TARGET := $(subst /.config,,$(TARGET)))
 	@echo "The target \"$(TARGET)\" is not initialized yet!"
@@ -112,10 +181,6 @@ outputs/%/.config:
 	@echo "make $(TARGET)_defconfig"
 	@echo
 	@echo "to initialize it!"
-	@false
-
-configs/%_defconfig:
-	@echo "ERROR: This defconfig does not exist!"
 	@false
 # end - Helper stuff
 
@@ -142,18 +207,3 @@ endef
 %_burn-test-upgrade: %_isInited
 	$(call fwup-burn-test,upgrade)
 # end - Fwup stuff
-
-help:
-	@echo 'Project Build Help'
-	@echo '------------------'
-	@echo
-	@echo 'Actions:'
-	@echo "  <target>_all		Build everything"
-	@echo "  <target>_clean	Clean everything"
-	@echo "  <target>_menuconfig	Open the menuconfig"
-	@echo "  <target>_save		Save to current configuration to the respective defconfig"
-	@echo "  Where <target> is one of the available targets."
-	@echo
-	@echo "Available targets:"
-	@$(foreach b, $(sort $(notdir $(wildcard configs/*_defconfig))), \
-	  printf "  * %s\\n" $(b:_defconfig=);)

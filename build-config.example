@@ -1,0 +1,4 @@
+# Example build environment.
+# Copy this file to build-config for it to become effective.
+DL_DIR := $(TOPDIR)/dl
+PARALLEL_JOBS := 8
