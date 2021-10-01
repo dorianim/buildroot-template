@@ -1,0 +1,4 @@
+.buildStep-*
+outputs/*
+/.pc/
+/dl/
