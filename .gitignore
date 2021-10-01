@@ -1,5 +1,5 @@
 .buildStep-*
-outputs/*
+/outputs
 /.pc/
 /dl/
 /build-config
